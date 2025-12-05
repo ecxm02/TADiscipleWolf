@@ -7,7 +7,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "http://localhost:5173", // Allow Vite dev server
+        origin: ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175"], // Allow Vite dev server ports
         methods: ["GET", "POST"]
     }
 });
@@ -20,19 +20,8 @@ app.get('/api/status', (req, res) => {
     res.json({ status: 'ok', message: 'Server is running' });
 });
 
-// Socket.io connection
-io.on('connection', (socket) => {
-    console.log('A user connected:', socket.id);
-
-    socket.on('ping', () => {
-        console.log('Received ping from client');
-        socket.emit('pong', { message: 'Hello from server!' });
-    });
-
-    socket.on('disconnect', () => {
-        console.log('User disconnected:', socket.id);
-    });
-});
+// Socket.io connection handled by controller
+require('./controllers/socketController')(io);
 
 // Handle any requests that don't match the above (SPA fallback)
 app.get('*', (req, res) => {
@@ -40,6 +29,9 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+console.log('Attempting to start server on port:', PORT);
 server.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
+}).on('error', (err) => {
+    console.error('Server failed to start:', err);
 });

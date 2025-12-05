@@ -1,44 +1,45 @@
 <script setup>
-import { ref, onMounted } from 'vue'
-import io from 'socket.io-client'
+import { onMounted, watch } from 'vue'
+import { useGameStore } from './stores/gameStore'
 
-const socket = io()
-const message = ref('')
-const status = ref('Disconnected')
+const gameStore = useGameStore()
 
-onMounted(() => {
-  socket.on('connect', () => {
-    status.value = 'Connected: ' + socket.id
-  })
+const updateTheme = (phase) => {
+  // LOBBY and NIGHT are 'night' theme
+  // DAY and VOTING are 'retro' theme
+  const theme = (phase === 'DAY' || phase === 'VOTING') ? 'retro' : 'night'
+  console.log('Switching theme to:', theme, 'for phase:', phase)
+  document.documentElement.setAttribute('data-theme', theme)
+}
 
-  socket.on('pong', (data) => {
-    message.value = data.message
-  })
-
-  socket.on('disconnect', () => {
-    status.value = 'Disconnected'
-  })
+watch(() => gameStore.phase, (newPhase) => {
+  updateTheme(newPhase)
 })
 
-const sendPing = () => {
-  socket.emit('ping')
-}
+onMounted(() => {
+  gameStore.initSocket()
+  updateTheme(gameStore.phase)
+})
 </script>
 
 <template>
-  <div class="container mx-auto p-4">
-    <h1 class="text-3xl font-bold underline mb-4">
-      Disciples & Spirits
-    </h1>
-    <div class="card w-96 bg-base-100 shadow-xl">
-      <div class="card-body">
-        <h2 class="card-title">Socket Test</h2>
-        <p>Status: {{ status }}</p>
-        <p v-if="message">Server says: {{ message }}</p>
-        <div class="card-actions justify-end">
-          <button class="btn btn-primary" @click="sendPing">Send Ping</button>
-        </div>
-      </div>
-    </div>
+  <div class="min-h-screen bg-base-100 transition-colors duration-1000 ease-in-out">
+    <router-view v-slot="{ Component }">
+      <transition name="fade" mode="out-in">
+        <component :is="Component" />
+      </transition>
+    </router-view>
   </div>
 </template>
+
+<style>
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+</style>

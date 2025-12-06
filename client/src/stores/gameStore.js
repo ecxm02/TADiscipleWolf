@@ -7,9 +7,9 @@ export const useGameStore = defineStore('game', {
     state: () => ({
         socket: null,
         connected: false,
-        joined: false,
+        joined: !!localStorage.getItem('roomCode'), // Optimistic join
         isAdmin: false,
-        roomCode: null,
+        roomCode: localStorage.getItem('roomCode') || null,
         token: localStorage.getItem('token') || null,
         authError: '',
         roomError: '',
@@ -25,7 +25,13 @@ export const useGameStore = defineStore('game', {
         teammates: [],
         angelRequests: [],
         angelRequestApproved: false,
+        angelRequestStatus: null,
+        angelRequestApproved: false,
+        angelRequestStatus: null,
         protectedTargetName: '',
+        tasks: { Disciple: [], Prophet: [] }, // NEW
+        timer: { active: false, remaining: 0 }, // NEW
+        pollingInterval: null, // NEW
     }),
 
     actions: {
@@ -36,6 +42,12 @@ export const useGameStore = defineStore('game', {
 
             this.socket.on('connect', () => {
                 this.connected = true;
+                if (this.token && this.roomCode) {
+                    console.log('Auto-rejoining room:', this.roomCode);
+                    this.socket.emit('join_room', { token: this.token, roomCode: this.roomCode });
+                } else if (this.token) {
+                    this.fetchUserRooms();
+                }
             });
 
             this.socket.on('disconnect', () => {
@@ -47,6 +59,10 @@ export const useGameStore = defineStore('game', {
 
             this.socket.on('error', (msg) => {
                 this.roomError = msg;
+                if (msg === 'Room not found' || msg === 'Auth required') {
+                    this.leaveGame();
+                    router.push({ name: 'dashboard' });
+                }
             });
 
             this.socket.on('user_rooms_update', (rooms) => {
@@ -79,8 +95,10 @@ export const useGameStore = defineStore('game', {
             // Room Results
             this.socket.on('room_joined', (data) => {
                 this.roomCode = data.roomCode;
+                localStorage.setItem('roomCode', data.roomCode);
                 this.isAdmin = data.isHost;
                 this.myId = data.playerId;
+                this.myRole = data.role || 'Disciple';
                 this.joined = true;
                 this.roomError = '';
             });
@@ -101,7 +119,7 @@ export const useGameStore = defineStore('game', {
 
                 if (this.myId) {
                     const me = this.players.find(p => p.id === this.myId);
-                    if (me) {
+                    if (me && me.role !== 'Unknown') {
                         this.myRole = me.role;
                     }
                 }
@@ -117,7 +135,19 @@ export const useGameStore = defineStore('game', {
                     this.phase = state.phase;
                     this.angelRequests = state.angelRequests || [];
                     this.roomCode = state.roomCode;
+                    this.timerConfig = state.timerConfig; // Update timerConfig
+                    this.roleQuotas = state.roleQuotas;   // Update roleQuotas
+                    this.tasks = state.tasks || { Disciple: [], Prophet: [] }; // Update Tasks
+                    if (state.timer !== undefined) {
+                        this.timer.remaining = state.timer;
+                        this.timer.active = state.timer > 0;
+                    }
                 }
+            });
+
+            this.socket.on('timer_update', (remaining) => {
+                this.timer.remaining = remaining;
+                this.timer.active = remaining > 0;
             });
 
             this.socket.on('action_result', (result) => {
@@ -145,8 +175,15 @@ export const useGameStore = defineStore('game', {
 
             this.socket.on('angel_request_approved', (targetName) => {
                 this.angelRequestApproved = true;
+                this.angelRequestStatus = 'APPROVED';
                 this.protectedTargetName = targetName;
-                alert(`Your prayer has been heard. You are protecting ${targetName}.`);
+                // alert(`Your prayer has been heard. You are protecting ${targetName}.`);
+            });
+
+            this.socket.on('angel_request_rejected', () => {
+                this.angelRequestApproved = false;
+                this.angelRequestStatus = 'REJECTED';
+                this.protectedTargetName = '';
             });
 
             this.socket.on('kicked', () => {
@@ -185,11 +222,8 @@ export const useGameStore = defineStore('game', {
         logout() {
             this.token = null;
             localStorage.removeItem('token');
-            this.joined = false;
-            this.myId = null;
-            this.isAdmin = false;
-            this.roomCode = null;
-            this.roomError = '';
+            this.leaveGame();
+            this.authError = '';
         },
 
         // ... rest of actions
@@ -227,11 +261,7 @@ export const useGameStore = defineStore('game', {
             }
         },
 
-        resolveNight() {
-            if (this.socket && this.isAdmin) {
-                this.socket.emit('action_resolve_night');
-            }
-        },
+
 
         requestTask() {
             if (this.socket) {
@@ -275,6 +305,12 @@ export const useGameStore = defineStore('game', {
             }
         },
 
+        manageTask(action, role, content) {
+            if (this.socket && this.isAdmin) {
+                this.socket.emit('action_manage_task', { action, role, content });
+            }
+        },
+
         autoAssignRoles() {
             if (this.socket && this.isAdmin) {
                 this.socket.emit('action_auto_assign_roles');
@@ -285,6 +321,19 @@ export const useGameStore = defineStore('game', {
             if (this.socket && this.isAdmin) {
                 this.socket.emit('action_kick_player', playerId);
             }
+        },
+
+        submitAngelRequest(targetId, message) {
+            this.socket.emit('action_angel_request', { targetId, message });
+            this.angelRequestStatus = 'PENDING';
+        },
+
+        approveAngelRequest(angelId) {
+            this.socket.emit('action_angel_approve', angelId);
+        },
+
+        rejectAngelRequest(angelId) {
+            this.socket.emit('action_angel_reject', angelId);
         },
 
         fetchUserRooms() {
@@ -300,13 +349,35 @@ export const useGameStore = defineStore('game', {
         },
 
         leaveGame() {
+            this.stopPolling();
             this.joined = false;
             this.isAdmin = false;
             this.roomCode = null;
+            localStorage.removeItem('roomCode');
             this.roomError = '';
             this.players = [];
             this.phase = 'LOBBY';
             // We don't disconnect socket, just clear game state
+        },
+
+        requestStateSync() {
+            if (this.socket && this.connected) {
+                this.socket.emit('request_state_sync');
+            }
+        },
+
+        startPolling() {
+            if (this.pollingInterval) clearInterval(this.pollingInterval);
+            this.pollingInterval = setInterval(() => {
+                this.requestStateSync();
+            }, 5000);
+        },
+
+        stopPolling() {
+            if (this.pollingInterval) {
+                clearInterval(this.pollingInterval);
+                this.pollingInterval = null;
+            }
         }
     }
 })

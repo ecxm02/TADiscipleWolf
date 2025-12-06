@@ -11,11 +11,14 @@ class Game {
         this.createdAt = Date.now(); // NEW
 
         this.players = new Map(); // userId -> player object
+        this.kickedPlayers = new Map(); // userId -> player object (Persist state of kicked players)
         this.currentPhase = 'LOBBY';
         this.dayNumber = 0;
         this.votes = new Map(); // voterId -> targetId
         this.nightActions = new Map(); // playerId -> { type, targetId, payload }
         this.angelRequests = new Map(); // playerId -> { targetId, targetName, message, approved }
+
+        this.tasks = JSON.parse(JSON.stringify(TASKS)); // Mutable copy of tasks
 
         this.timerConfig = {
             DAY: 300,
@@ -40,13 +43,15 @@ class Game {
         return {
             roomCode: this.roomCode,
             hostId: this.hostId,
-            createdAt: this.createdAt, // NEW
+            createdAt: this.createdAt,
             players: Array.from(this.players.entries()),
+            kickedPlayers: Array.from(this.kickedPlayers.entries()),
             currentPhase: this.currentPhase,
             dayNumber: this.dayNumber,
             votes: Array.from(this.votes.entries()),
             nightActions: Array.from(this.nightActions.entries()),
             angelRequests: Array.from(this.angelRequests.entries()),
+            tasks: this.tasks,
             timerConfig: this.timerConfig,
             roleQuotas: this.roleQuotas
         };
@@ -54,13 +59,15 @@ class Game {
 
     static fromJSON(data) {
         const game = new Game(data.roomCode, data.hostId);
-        game.createdAt = data.createdAt || Date.now(); // NEW
+        game.createdAt = data.createdAt || Date.now();
         game.players = new Map(data.players);
+        game.kickedPlayers = new Map(data.kickedPlayers || []);
         game.currentPhase = data.currentPhase;
         game.dayNumber = data.dayNumber;
         game.votes = new Map(data.votes);
         game.nightActions = new Map(data.nightActions);
         game.angelRequests = new Map(data.angelRequests);
+        game.tasks = data.tasks || JSON.parse(JSON.stringify(TASKS));
         game.timerConfig = data.timerConfig || game.timerConfig;
         game.roleQuotas = data.roleQuotas || game.roleQuotas;
         return game;
@@ -69,6 +76,19 @@ class Game {
     // --- Game Logic Methods ---
 
     addPlayer(userId, username, socketId) {
+        // Check if player was previously kicked to restore state
+        if (this.kickedPlayers.has(userId)) {
+            const player = this.kickedPlayers.get(userId);
+            this.kickedPlayers.delete(userId);
+
+            player.online = true;
+            player.socketId = socketId;
+            player.name = username;
+
+            this.players.set(userId, player);
+            return player;
+        }
+
         if (!this.players.has(userId)) {
             this.players.set(userId, {
                 id: userId,
@@ -125,7 +145,8 @@ class Game {
             votes: Array.from(this.votes.entries()),
             nightActions: Array.from(this.nightActions.entries()),
             players: Array.from(this.players.values()),
-            angelRequests: Array.from(this.angelRequests.entries())
+            angelRequests: Array.from(this.angelRequests.entries()),
+            tasks: this.tasks
         };
     }
 
@@ -134,8 +155,25 @@ class Game {
     getTask(role, day) {
         if (role === 'Angel') return "Your role does not have a daily task.";
         let targetRole = role === 'Evil Spirit' ? 'Disciple' : role;
-        const roleTasks = TASKS[targetRole] || TASKS['Disciple'];
+        const roleTasks = this.tasks[targetRole] || this.tasks['Disciple'];
+        if (roleTasks.length === 0) return "No tasks available.";
         return roleTasks[Math.floor(Math.random() * roleTasks.length)];
+    }
+
+    manageTask(action, role, content) {
+        if (!this.tasks[role]) return false;
+
+        if (action === 'ADD') {
+            this.tasks[role].push(content);
+            return true;
+        } else if (action === 'REMOVE') {
+            const index = this.tasks[role].indexOf(content);
+            if (index > -1) {
+                this.tasks[role].splice(index, 1);
+                return true;
+            }
+        }
+        return false;
     }
 
     setPhase(phase, io) {
@@ -145,6 +183,8 @@ class Game {
             this.stopTimer();
 
             if (phase === 'DAY') {
+                // Clean start for Day - No reports here (handled in Night)
+
                 this.dayNumber++;
                 this.players.forEach(p => {
                     p.taskCompleted = false;
@@ -168,11 +208,12 @@ class Game {
             }
             if (phase === 'NIGHT') {
                 if (previousPhase === 'VOTING') {
+                    // Resolve EVERYTHING (Votes + Night Actions from Day)
                     const voteResult = this.resolveVotes();
                     const { publicResult, privateMessages } = this.resolveNightPhase(voteResult);
 
                     io.to(this.roomCode).emit('vote_result', { result: publicResult });
-                    io.to(`admin_${this.roomCode}`).emit('action_result', { message: publicResult });
+                    // io.to(`admin_${this.roomCode}`).emit('action_result', { message: publicResult }); // Removed to avoid double display in Admin UI
 
                     for (const [playerId, message] of Object.entries(privateMessages)) {
                         const player = this.players.get(parseInt(playerId));
@@ -193,10 +234,12 @@ class Game {
     }
 
     startTimer(duration, io, onComplete) {
-        if (duration <= 0) return;
+        const dur = parseInt(duration);
+        if (isNaN(dur) || dur <= 0) return;
+
         this.timerState.active = true;
-        this.timerState.duration = duration;
-        this.timerState.remaining = duration;
+        this.timerState.duration = dur;
+        this.timerState.remaining = dur;
 
         io.to(this.roomCode).emit('timer_update', this.timerState.remaining);
         io.to(`admin_${this.roomCode}`).emit('timer_update', this.timerState.remaining);
@@ -322,6 +365,57 @@ class Game {
             this.players.get(id).role = rolePool[index];
         });
         return { success: true, message: 'Roles assigned successfully.' };
+    }
+    toggleTask(playerId) {
+        let pid = playerId;
+        if (typeof playerId === 'string') pid = parseInt(playerId);
+
+        if (this.players.has(pid)) {
+            const player = this.players.get(pid);
+            player.taskCompleted = !player.taskCompleted;
+            return true;
+        }
+        return false;
+    }
+
+    killPlayerManual(playerId) {
+        let pid = playerId;
+        if (typeof playerId === 'string') pid = parseInt(playerId);
+
+        if (this.players.has(pid)) {
+            const player = this.players.get(pid);
+            player.alive = false;
+            return true;
+        }
+        return false;
+    }
+
+    revivePlayer(playerId) {
+        let pid = playerId;
+        if (typeof playerId === 'string') pid = parseInt(playerId);
+
+        if (this.players.has(pid)) {
+            const player = this.players.get(pid);
+            player.alive = true;
+            return true;
+        }
+        return false;
+    }
+
+    kickPlayer(playerId) {
+        let pid = playerId;
+        if (typeof playerId === 'string') pid = parseInt(playerId);
+
+        if (this.players.has(pid)) {
+            const player = this.players.get(pid);
+            player.online = false;
+            player.socketId = null;
+
+            this.kickedPlayers.set(pid, player);
+            this.players.delete(pid);
+            return true;
+        }
+        return false;
     }
 }
 

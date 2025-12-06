@@ -57,7 +57,8 @@ module.exports = (io) => {
             socket.emit('room_joined', {
                 roomCode,
                 isHost,
-                playerId: user.id
+                playerId: user.id,
+                role: player ? player.role : 'Disciple'
             });
 
             // Send initial state
@@ -131,6 +132,12 @@ module.exports = (io) => {
             });
         });
 
+        socket.on('action_revive', (playerId) => {
+            withGame(game => {
+                if (game.revivePlayer) game.revivePlayer(playerId);
+            });
+        });
+
         socket.on('action_set_phase', (phase) => {
             withGame(game => game.setPhase(phase, io));
         });
@@ -160,24 +167,6 @@ module.exports = (io) => {
             }
         });
 
-        socket.on('action_resolve_night', () => {
-            const game = gameService.getGameBySocket(socket.id);
-            if (!game) return;
-
-            const { publicResult, privateMessages } = game.resolveNightPhase(null);
-
-            io.to(game.roomCode).emit('vote_result', { result: publicResult });
-            io.to(`admin_${game.roomCode}`).emit('action_result', { message: publicResult });
-
-            for (const [playerId, message] of Object.entries(privateMessages)) {
-                const p = game.players.get(parseInt(playerId));
-                if (p && p.socketId) io.to(p.socketId).emit('private_message', message);
-            }
-
-            gameService.handleAction(socket.id, () => { });
-            io.to(game.roomCode).emit('state_update', game.getPublicState());
-            io.to(`admin_${game.roomCode}`).emit('admin_state_update', game.getAdminState());
-        });
 
         socket.on('request_task', () => {
             const game = gameService.getGameBySocket(socket.id);
@@ -210,11 +199,23 @@ module.exports = (io) => {
                             targetId: target.id,
                             targetName: target.name,
                             message: message,
-                            approved: false
+                            status: 'PENDING' // Changed from approved: false
                         });
                         gameService.handleAction(socket.id, () => { });
                         io.to(`admin_${game.roomCode}`).emit('admin_state_update', game.getAdminState());
                     }
+                }
+            }
+        });
+
+        socket.on('request_state_sync', () => {
+            const game = gameService.getGameBySocket(socket.id);
+            if (game) {
+                socket.emit('state_update', game.getPublicState());
+
+                // If the socket is in the admin room (host), send admin update too
+                if (socket.rooms.has(`admin_${game.roomCode}`)) {
+                    socket.emit('admin_state_update', game.getAdminState());
                 }
             }
         });
@@ -226,16 +227,56 @@ module.exports = (io) => {
             let aid = angelId;
             if (typeof angelId === 'string') aid = parseInt(angelId);
 
+            console.log(`[AngelApprove] Room: ${game.roomCode}, AngelID: ${aid}`);
+
             if (game.angelRequests.has(aid)) {
                 const req = game.angelRequests.get(aid);
-                req.approved = true;
+                req.status = 'APPROVED'; // Changed from approved = true
                 game.nightActions.set(aid, { type: 'PROTECT', targetId: req.targetId });
 
                 gameService.handleAction(socket.id, () => { });
                 io.to(`admin_${game.roomCode}`).emit('admin_state_update', game.getAdminState());
 
                 const angel = game.players.get(aid);
-                if (angel && angel.socketId) io.to(angel.socketId).emit('angel_request_approved', req.targetName);
+                if (angel) {
+                    console.log(`[AngelApprove] Found Angel: ${angel.name}, Socket: ${angel.socketId}`);
+                    if (angel.socketId) {
+                        io.to(angel.socketId).emit('angel_request_approved', req.targetName);
+                        console.log(`[AngelApprove] Emitted to ${angel.socketId}`);
+                    } else {
+                        console.log(`[AngelApprove] Angel has no socketId`);
+                    }
+                } else {
+                    console.log(`[AngelApprove] Angel player not found in game.players`);
+                }
+            } else {
+                console.log(`[AngelApprove] No request found for AngelID: ${aid}`);
+            }
+        });
+
+        socket.on('action_angel_reject', (angelId) => {
+            const game = gameService.getGameBySocket(socket.id);
+            if (!game) return;
+
+            let aid = angelId;
+            if (typeof angelId === 'string') aid = parseInt(angelId);
+
+            console.log(`[AngelReject] Room: ${game.roomCode}, AngelID: ${aid}`);
+
+            if (game.angelRequests.has(aid)) {
+                const req = game.angelRequests.get(aid);
+                req.status = 'REJECTED';
+
+                // Remove any night action if it existed (though it shouldn't yet)
+                game.nightActions.delete(aid);
+
+                gameService.handleAction(socket.id, () => { });
+                io.to(`admin_${game.roomCode}`).emit('admin_state_update', game.getAdminState());
+
+                const angel = game.players.get(aid);
+                if (angel && angel.socketId) {
+                    io.to(angel.socketId).emit('angel_request_rejected');
+                }
             }
         });
 
@@ -250,6 +291,16 @@ module.exports = (io) => {
             withGame(game => {
                 game.roleQuotas = { ...game.roleQuotas, ...quotas };
             });
+        });
+
+        socket.on('action_manage_task', ({ action, role, content }) => {
+            const game = gameService.getGameBySocket(socket.id);
+            if (!game) return;
+
+            if (game.manageTask(action, role, content)) {
+                gameService.handleAction(socket.id, () => { });
+                io.to(`admin_${game.roomCode}`).emit('admin_state_update', game.getAdminState());
+            }
         });
 
         socket.on('action_auto_assign_roles', () => {
@@ -278,8 +329,9 @@ module.exports = (io) => {
             if (game.players.has(pid)) {
                 const p = game.players.get(pid);
                 const kickedSocketId = p.socketId;
-                game.removePlayer(pid);
-                game.players.delete(pid);
+
+                // Use new kickPlayer method
+                game.kickPlayer(pid);
 
                 gameService.handleAction(socket.id, () => { });
 

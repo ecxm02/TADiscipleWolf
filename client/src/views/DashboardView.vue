@@ -16,7 +16,7 @@
                     <h3>Join a Game</h3>
                     <p>Enter the 4-digit room code.</p>
                     <div class="join-input">
-                        <input v-model="roomCode" type="text" placeholder="Code (e.g. 1234)" maxlength="4" />
+                        <input v-model="roomCode" type="text" placeholder="Code (e.g. 1234)" maxlength="4" @keyup.enter="joinGame" />
                         <button @click="joinGame" class="btn-secondary" :disabled="!roomCode">Join</button>
                     </div>
                 </div>

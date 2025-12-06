@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 import LobbyPhase from '../components/game/LobbyPhase.vue'
 import DayPhase from '../components/game/DayPhase.vue'
@@ -7,6 +7,15 @@ import VotingPhase from '../components/game/VotingPhase.vue'
 import NightPhase from '../components/game/NightPhase.vue'
 
 const gameStore = useGameStore()
+
+/* 
+onMounted(() => {
+  gameStore.startPolling()
+})
+onUnmounted(() => {
+  gameStore.stopPolling()
+})
+*/
 
 
 const myPlayer = computed(() => {
@@ -29,6 +38,7 @@ const currentPhaseComponent = computed(() => {
 
 const currentTheme = computed(() => {
   if (gameStore.phase === 'LOBBY') return 'retro' // Default lobby theme
+  if (gameStore.phase === 'NIGHT') return 'night'
   
   if (myPlayer.value) {
     switch (myPlayer.value.role) {

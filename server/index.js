@@ -7,7 +7,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175"], // Allow Vite dev server ports
+        origin: "*", // Allow all origins (required for Cloudflare Tunnel / external access)
         methods: ["GET", "POST"]
     }
 });

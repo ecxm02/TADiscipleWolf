@@ -7,13 +7,7 @@ import VotingPhase from '../components/game/VotingPhase.vue'
 import NightPhase from '../components/game/NightPhase.vue'
 
 const gameStore = useGameStore()
-const playerName = ref('')
 
-const join = () => {
-  if (playerName.value.trim()) {
-    gameStore.joinGame(playerName.value)
-  }
-}
 
 const myPlayer = computed(() => {
   return gameStore.players.find(p => p.id === gameStore.myId)
@@ -33,49 +27,56 @@ const currentPhaseComponent = computed(() => {
   }
 })
 
+const currentTheme = computed(() => {
+  if (gameStore.phase === 'LOBBY') return 'retro' // Default lobby theme
+  
+  if (myPlayer.value) {
+    switch (myPlayer.value.role) {
+      case 'Angel': return 'angel-theme'
+      case 'Evil Spirit': return 'evil-theme'
+      case 'Prophet': return 'prophet-theme'
+      case 'Disciple': return 'disciple-theme'
+      default: return 'retro'
+    }
+  }
+  return 'retro'
+})
+
 const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+import { useRouter } from 'vue-router';
+const router = useRouter();
 
+const returnToDashboard = () => {
+    gameStore.leaveGame();
+    router.push({ name: 'dashboard' });
+};
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center p-4">
-    <!-- Login Screen -->
-    <transition name="fade" mode="out-in">
-      <div v-if="!gameStore.joined" class="card w-full max-w-sm bg-base-200 shadow-2xl">
-        <div class="card-body">
-          <h2 class="card-title justify-center mb-6 text-2xl font-serif">Disciples & Spirits</h2>
-          <div class="form-control w-full">
-            <label class="label">
-              <span class="label-text">What is your name?</span>
-            </label>
-            <input 
-              v-model="playerName" 
-              type="text" 
-              placeholder="Enter your name" 
-              class="input input-bordered w-full input-primary" 
-              @keyup.enter="join"
-            />
-          </div>
-          <div class="card-actions justify-end mt-6">
-            <button class="btn btn-primary w-full font-bold" @click="join">Join Game</button>
-          </div>
-        </div>
-      </div>
-
+  <div class="min-h-screen flex items-center justify-center p-4 transition-colors duration-1000 bg-base-100" :data-theme="currentTheme">
       <!-- Player Dashboard -->
-      <div v-else class="w-full max-w-4xl flex flex-col items-center">
+      <div class="w-full max-w-4xl flex flex-col items-center">
         <div v-if="myPlayer" class="w-full flex flex-col items-center">
           
           <!-- Header -->
           <div class="text-center mb-8 w-full relative">
             <h1 class="text-4xl font-bold mb-2 font-serif tracking-wide">{{ myPlayer.name }}</h1>
             
-            <div class="flex justify-center gap-4 items-center">
+            <div class="flex justify-center gap-4 items-center flex-wrap">
+                <button class="btn btn-sm btn-ghost absolute left-0 top-0" @click="returnToDashboard">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+                    Dashboard
+                </button>
+
+                <div class="badge badge-lg badge-primary font-mono text-xl p-4">
+                    Room: {{ gameStore.roomCode }}
+                </div>
+
                 <div class="badge badge-lg shadow-sm" :class="myPlayer.alive ? 'badge-success' : 'badge-error'">
                   {{ myPlayer.alive ? 'ALIVE' : 'DEAD' }}
                 </div>
@@ -113,6 +114,5 @@ const formatTime = (seconds) => {
         
         <div v-else class="loading loading-spinner loading-lg text-primary"></div>
       </div>
-    </transition>
   </div>
 </template>

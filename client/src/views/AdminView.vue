@@ -14,6 +14,7 @@ const dayNumber = computed(() => gameStore.dayNumber)
 const timer = computed(() => gameStore.timer)
 const roleQuotas = computed(() => gameStore.roleQuotas)
 const timerConfig = computed(() => gameStore.timerConfig)
+const roomCode = computed(() => gameStore.roomCode)
 
 // Local state for edits
 const localQuotas = ref({...roleQuotas.value})
@@ -91,6 +92,13 @@ const approveRequest = (id) => {
     gameStore.approveAngelRequest(id)
 }
 
+import { useRouter } from 'vue-router';
+const router = useRouter();
+
+const returnToDashboard = () => {
+    gameStore.leaveGame();
+    router.push({ name: 'dashboard' });
+};
 </script>
 
 <template>
@@ -102,9 +110,17 @@ const approveRequest = (id) => {
         <div>
             <h1 class="text-3xl font-bold">GM Dashboard</h1>
             <div class="text-xl opacity-70">Day {{ dayNumber }}</div>
+            <div class="mt-2">
+                <span class="badge badge-lg badge-primary font-mono text-xl p-4">Room: {{ roomCode }}</span>
+            </div>
         </div>
         
         <div class="flex gap-4 items-center">
+            <button class="btn btn-sm btn-ghost" @click="returnToDashboard">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+                Dashboard
+            </button>
+            
             <!-- Timer Display -->
             <div v-if="timer && timer.active" class="badge badge-lg badge-accent font-mono text-xl p-4">
                 {{ formatTime(timer.remaining) }}

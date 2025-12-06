@@ -1,23 +1,31 @@
 import { defineStore } from 'pinia'
 import io from 'socket.io-client'
 
+import router from '../router'
+
 export const useGameStore = defineStore('game', {
     state: () => ({
         socket: null,
         connected: false,
         joined: false,
         isAdmin: false,
-        phase: 'LOBBY', // LOBBY, DAY, VOTING, NIGHT
-        players: [], // List of players (filtered if public, full if admin)
+        roomCode: null,
+        token: localStorage.getItem('token') || null,
+        authError: '',
+        roomError: '',
+        userRooms: [], // NEW
+
+        phase: 'LOBBY',
+        players: [],
         myId: null,
-        myRole: 'Disciple', // Default, updated via socket
-        lastActionMessage: '', // For feedback (e.g., "Miraculously Saved")
-        voteResult: null, // Store the result of the vote
-        currentTask: '', // Store the daily task
-        teammates: [], // List of teammate names (for Evil Spirit/Angel)
-        angelRequests: [], // [sessionId, {targetId, message, approved}]
-        angelRequestApproved: false, // Track if my angel request is approved
-        protectedTargetName: '', // Name of the person I am protecting
+        myRole: 'Disciple',
+        lastActionMessage: '',
+        voteResult: null,
+        currentTask: '',
+        teammates: [],
+        angelRequests: [],
+        angelRequestApproved: false,
+        protectedTargetName: '',
     }),
 
     actions: {
@@ -28,38 +36,74 @@ export const useGameStore = defineStore('game', {
 
             this.socket.on('connect', () => {
                 this.connected = true;
-                // Try to reconnect if we have a session
-                const sessionId = localStorage.getItem('sessionId');
-                if (sessionId) {
-                    this.myId = sessionId;
-                    this.socket.emit('join_game', { sessionId });
-                }
             });
 
             this.socket.on('disconnect', () => {
                 this.connected = false;
                 this.joined = false;
-                this.myId = null;
-                this.myRole = 'Disciple';
                 this.isAdmin = false;
-                this.phase = 'LOBBY';
-                this.players = [];
-                this.voteResult = null;
-                this.currentTask = '';
-                this.teammates = [];
-                this.privateMessage = '';
-                this.angelRequests = [];
-                this.angelRequestApproved = false;
+                this.roomCode = null;
+            });
+
+            this.socket.on('error', (msg) => {
+                this.roomError = msg;
+            });
+
+            this.socket.on('user_rooms_update', (rooms) => {
+                this.userRooms = rooms;
+            });
+
+            // Auth Results
+            this.socket.on('register_result', (res) => {
+                if (res.success) {
+                    this.token = res.token;
+                    localStorage.setItem('token', res.token);
+                    this.myId = res.userId;
+                    this.authError = '';
+                } else {
+                    this.authError = res.message;
+                }
+            });
+
+            this.socket.on('login_result', (res) => {
+                if (res.success) {
+                    this.token = res.token;
+                    localStorage.setItem('token', res.token);
+                    this.myId = res.userId;
+                    this.authError = '';
+                } else {
+                    this.authError = res.message;
+                }
+            });
+
+            // Room Results
+            this.socket.on('room_joined', (data) => {
+                this.roomCode = data.roomCode;
+                this.isAdmin = data.isHost;
+                this.myId = data.playerId;
+                this.joined = true;
+                this.roomError = '';
+            });
+
+            this.socket.on('force_rejoin', () => {
+                console.log('Force rejoin (Invalid Token)');
+                this.logout();
             });
 
             this.socket.on('state_update', (state) => {
-                // Handle both old format (array) and new format (object with phase)
                 if (Array.isArray(state)) {
                     this.players = state;
                 } else {
                     this.players = state.players;
                     this.phase = state.phase;
                     this.angelRequests = state.angelRequests || [];
+                }
+
+                if (this.myId) {
+                    const me = this.players.find(p => p.id === this.myId);
+                    if (me) {
+                        this.myRole = me.role;
+                    }
                 }
             });
 
@@ -69,13 +113,10 @@ export const useGameStore = defineStore('game', {
 
             this.socket.on('admin_state_update', (state) => {
                 if (this.isAdmin) {
-                    if (Array.isArray(state)) {
-                        this.players = state;
-                    } else {
-                        this.players = state.players;
-                        this.phase = state.phase;
-                        this.angelRequests = state.angelRequests || [];
-                    }
+                    this.players = state.players;
+                    this.phase = state.phase;
+                    this.angelRequests = state.angelRequests || [];
+                    this.roomCode = state.roomCode;
                 }
             });
 
@@ -99,62 +140,61 @@ export const useGameStore = defineStore('game', {
             });
 
             this.socket.on('private_message', (msg) => {
-                this.privateMessage = msg;
+                alert(msg);
             });
 
             this.socket.on('angel_request_approved', (targetName) => {
                 this.angelRequestApproved = true;
                 this.protectedTargetName = targetName;
-                // Feedback for the Angel
                 alert(`Your prayer has been heard. You are protecting ${targetName}.`);
             });
 
-            this.socket.on('force_rejoin', () => {
-                console.log('Force rejoin received');
-                localStorage.removeItem('sessionId');
-                this.myId = null;
-                this.joined = false;
-            });
-
             this.socket.on('kicked', () => {
-                console.log('Kicked received');
-                localStorage.removeItem('sessionId');
-                this.myId = null;
-                this.joined = false;
-                // Reload to clear state completely or just stay on login
-                window.location.reload();
+                alert('You have been kicked from the game.');
+                this.leaveGame();
+                router.push({ name: 'dashboard' });
             });
         },
 
-        joinGame(name) {
+        register(username, password) {
             if (this.socket) {
-                // Generate a session ID if one doesn't exist
-                let sessionId = localStorage.getItem('sessionId');
-                if (!sessionId) {
-                    sessionId = this.generateUUID();
-                    localStorage.setItem('sessionId', sessionId);
-                }
-                this.myId = sessionId;
-                this.socket.emit('join_game', { name, sessionId });
-                this.joined = true;
+                this.socket.emit('register', { username, password });
             }
         },
 
-        generateUUID() {
-            if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-                return crypto.randomUUID();
+        login(username, password) {
+            if (this.socket) {
+                this.socket.emit('login', { username, password });
             }
-            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-                var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-                return v.toString(16);
-            });
         },
+
+        hostGame() {
+            if (this.socket && this.token) {
+                this.roomError = '';
+                this.socket.emit('host_game', { token: this.token });
+            }
+        },
+
+        joinRoom(roomCode) {
+            if (this.socket && this.token) {
+                this.roomError = '';
+                this.socket.emit('join_room', { token: this.token, roomCode });
+            }
+        },
+
+        logout() {
+            this.token = null;
+            localStorage.removeItem('token');
+            this.joined = false;
+            this.myId = null;
+            this.isAdmin = false;
+            this.roomCode = null;
+            this.roomError = '';
+        },
+
+        // ... rest of actions
 
         loginAdmin() {
-            if (this.socket) {
-                this.socket.emit('admin_login');
-                this.isAdmin = true;
-            }
         },
 
         setPhase(phase) {
@@ -223,7 +263,6 @@ export const useGameStore = defineStore('game', {
             }
         },
 
-        // Advanced Actions
         setTimerConfig(config) {
             if (this.socket && this.isAdmin) {
                 this.socket.emit('action_set_timer_config', config);
@@ -246,6 +285,28 @@ export const useGameStore = defineStore('game', {
             if (this.socket && this.isAdmin) {
                 this.socket.emit('action_kick_player', playerId);
             }
+        },
+
+        fetchUserRooms() {
+            if (this.socket && this.token) {
+                this.socket.emit('get_user_rooms', { token: this.token });
+            }
+        },
+
+        deleteRoom(roomCode) {
+            if (this.socket && this.token) {
+                this.socket.emit('delete_room', { token: this.token, roomCode });
+            }
+        },
+
+        leaveGame() {
+            this.joined = false;
+            this.isAdmin = false;
+            this.roomCode = null;
+            this.roomError = '';
+            this.players = [];
+            this.phase = 'LOBBY';
+            // We don't disconnect socket, just clear game state
         }
     }
 })

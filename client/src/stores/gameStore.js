@@ -13,7 +13,7 @@ export const useGameStore = defineStore('game', {
         lastActionMessage: '', // For feedback (e.g., "Miraculously Saved")
         voteResult: null, // Store the result of the vote
         currentTask: '', // Store the daily task
-        privateMessage: '', // Store private messages (e.g. Prophet vision)
+        angelRequests: [], // [sessionId, {targetId, message, approved}]
     }),
 
     actions: {
@@ -24,7 +24,12 @@ export const useGameStore = defineStore('game', {
 
             this.socket.on('connect', () => {
                 this.connected = true;
-                this.myId = this.socket.id;
+                // Try to reconnect if we have a session
+                const sessionId = localStorage.getItem('sessionId');
+                if (sessionId) {
+                    this.myId = sessionId;
+                    this.socket.emit('join_game', { sessionId });
+                }
             });
 
             this.socket.on('disconnect', () => {
@@ -37,6 +42,7 @@ export const useGameStore = defineStore('game', {
                 this.voteResult = null;
                 this.currentTask = '';
                 this.privateMessage = '';
+                this.angelRequests = [];
             });
 
             this.socket.on('state_update', (state) => {
@@ -46,6 +52,7 @@ export const useGameStore = defineStore('game', {
                 } else {
                     this.players = state.players;
                     this.phase = state.phase;
+                    this.angelRequests = state.angelRequests || [];
                 }
             });
 
@@ -60,7 +67,7 @@ export const useGameStore = defineStore('game', {
                     } else {
                         this.players = state.players;
                         this.phase = state.phase;
-                        // Could also store votes here if needed
+                        this.angelRequests = state.angelRequests || [];
                     }
                 }
             });
@@ -83,12 +90,34 @@ export const useGameStore = defineStore('game', {
             this.socket.on('private_message', (msg) => {
                 this.privateMessage = msg;
             });
+
+            this.socket.on('angel_request_approved', () => {
+                // Feedback for the Angel
+                alert("Your prayer has been heard and approved.");
+            });
         },
 
         joinGame(name) {
             if (this.socket) {
-                this.socket.emit('join_game', name);
+                // Generate a session ID if one doesn't exist
+                let sessionId = localStorage.getItem('sessionId');
+                if (!sessionId) {
+                    sessionId = this.generateUUID();
+                    localStorage.setItem('sessionId', sessionId);
+                }
+                this.myId = sessionId;
+                this.socket.emit('join_game', { name, sessionId });
             }
+        },
+
+        generateUUID() {
+            if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+                return crypto.randomUUID();
+            }
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+                var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
         },
 
         loginAdmin() {
@@ -113,6 +142,18 @@ export const useGameStore = defineStore('game', {
         submitNightAction(type, targetId, payload) {
             if (this.socket) {
                 this.socket.emit('action_night_action', { type, targetId, payload });
+            }
+        },
+
+        submitAngelRequest(targetId, message) {
+            if (this.socket) {
+                this.socket.emit('action_angel_request', { targetId, message });
+            }
+        },
+
+        approveAngelRequest(targetSessionId) {
+            if (this.socket && this.isAdmin) {
+                this.socket.emit('action_angel_approve', targetSessionId);
             }
         },
 

@@ -85,6 +85,12 @@ const formatTime = (seconds) => {
     return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+const angelRequests = computed(() => gameStore.angelRequests)
+
+const approveRequest = (id) => {
+    gameStore.approveAngelRequest(id)
+}
+
 </script>
 
 <template>
@@ -162,6 +168,39 @@ const formatTime = (seconds) => {
                           </div>
                       </div>
                   </div>
+              </div>
+          </div>
+      </div>
+
+      <!-- Angel Requests Panel -->
+      <div v-if="angelRequests && angelRequests.length > 0" class="card bg-base-100 shadow-xl mb-8 border-l-4 border-info">
+          <div class="card-body">
+              <h2 class="card-title text-info">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                  Prayer Requests
+              </h2>
+              <div class="overflow-x-auto">
+                  <table class="table w-full">
+                      <thead>
+                          <tr>
+                              <th>Angel</th>
+                              <th>Target</th>
+                              <th>Prayer</th>
+                              <th>Action</th>
+                          </tr>
+                      </thead>
+                      <tbody>
+                          <tr v-for="[id, req] in angelRequests" :key="id">
+                              <td>{{ players.find(p => p.id === id)?.name || 'Unknown' }}</td>
+                              <td>{{ req.targetName }}</td>
+                              <td class="italic">"{{ req.message }}"</td>
+                              <td>
+                                  <button v-if="!req.approved" class="btn btn-sm btn-success" @click="approveRequest(id)">Approve</button>
+                                  <span v-else class="badge badge-success">Approved</span>
+                              </td>
+                          </tr>
+                      </tbody>
+                  </table>
               </div>
           </div>
       </div>

@@ -1,15 +1,17 @@
 const players = new Map();
-let currentPhase = 'LOBBY'; // LOBBY, DAY, VOTING, NIGHT
+const socketMap = new Map(); // socketId -> sessionId
+let currentPhase = 'LOBBY'; // LOBBY, DAY, VOTING, NIGHT, RESULTS
 let dayNumber = 0;
 const votes = new Map(); // voterId -> targetId
 const nightActions = new Map(); // playerId -> { type, targetId, payload }
+const angelRequests = new Map(); // playerId -> { targetId, targetName, message, approved }
 
 // Advanced Features State
 let timerConfig = {
     DAY: 300, // 5 minutes
     VOTING: 60, // 1 minute
     NIGHT: 0, // Manual
-    RESULTS: 0 // Manual
+    RESULTS: 30 // Manual/Auto
 };
 let timerState = {
     active: false,
@@ -71,27 +73,53 @@ const TASKS = {
 };
 
 const gameService = {
-    addPlayer(id, name) {
-        if (!players.has(id)) {
-            players.set(id, {
-                id,
-                name: name || `Player ${id.substr(0, 4)}`,
+    addPlayer(socketId, name, sessionId) {
+        // Map socket to session
+        socketMap.set(socketId, sessionId);
+
+        if (!players.has(sessionId)) {
+            players.set(sessionId, {
+                id: sessionId, // Use sessionId as the player ID
+                name: name || `Player ${sessionId.substr(0, 4)}`,
                 role: 'Disciple', // Default role
                 alive: true,
                 taskCompleted: false,
                 protected: false, // Angel protection
+                online: true,
+                socketId: socketId, // Track current socket
+                currentTask: '' // Initialize current task
             });
+        } else {
+            // Reconnection
+            const player = players.get(sessionId);
+            player.online = true;
+            player.socketId = socketId;
+            // Update name if provided and different (allows renaming from generic)
+            if (name && name !== player.name) {
+                player.name = name;
+            }
         }
-        return players.get(id);
+        return players.get(sessionId);
     },
 
-    removePlayer(id) {
-        players.delete(id);
-        votes.delete(id);
-        nightActions.delete(id);
+    removePlayer(socketId) {
+        // Soft disconnect
+        const sessionId = socketMap.get(socketId);
+        if (sessionId) {
+            const player = players.get(sessionId);
+            if (player) {
+                player.online = false;
+            }
+            socketMap.delete(socketId);
+        }
     },
 
     getPlayer(id) {
+        // Check if id is a socketId
+        if (socketMap.has(id)) {
+            return players.get(socketMap.get(id));
+        }
+        // Otherwise assume it's a sessionId
         return players.get(id);
     },
 
@@ -116,6 +144,7 @@ const gameService = {
                 alive: p.alive,
                 taskCompleted: p.taskCompleted,
                 role: p.alive ? 'Unknown' : p.role,
+                online: p.online
             }))
         };
     },
@@ -129,12 +158,13 @@ const gameService = {
             roleQuotas: roleQuotas,
             votes: Array.from(votes.entries()),
             nightActions: Array.from(nightActions.entries()),
-            players: Array.from(players.values())
+            players: Array.from(players.values()),
+            angelRequests: Array.from(angelRequests.entries())
         };
     },
 
     setPhase(phase, io) {
-        if (['LOBBY', 'DAY', 'VOTING', 'NIGHT'].includes(phase)) {
+        if (['LOBBY', 'DAY', 'VOTING', 'NIGHT', 'RESULTS'].includes(phase)) {
             currentPhase = phase;
 
             // Stop any existing timer
@@ -148,6 +178,7 @@ const gameService = {
                     p.protected = false;
                 });
                 nightActions.clear();
+                angelRequests.clear();
 
                 // Start Day Timer
                 this.startTimer(timerConfig.DAY, io, () => {
@@ -160,14 +191,34 @@ const gameService = {
                 votes.clear();
                 // Start Voting Timer
                 this.startTimer(timerConfig.VOTING, io, () => {
-                    this.setPhase('NIGHT', io);
+                    // Transition directly to RESULTS
+                    // Resolve votes and night actions (which are now done in DAY)
+                    const voteResult = this.resolveVotes();
+                    const { publicResult, privateMessages } = this.resolveNightPhase();
+
+                    // Combine results
+                    const combinedResult = `${voteResult.result} ${publicResult}`;
+
+                    // Broadcast results
+                    io.to('public').emit('vote_result', { result: combinedResult });
+                    io.to('admin').emit('action_result', { message: combinedResult });
+
+                    for (const [playerId, message] of Object.entries(privateMessages)) {
+                        io.to(playerId).emit('private_message', message);
+                    }
+
+                    this.setPhase('RESULTS', io);
                     io.to('admin').emit('admin_state_update', this.getAdminState());
                     io.to('public').emit('state_update', this.getPublicState());
                 });
             }
-            if (phase === 'NIGHT') {
-                // Start Night Timer (optional, or just wait for manual resolve)
-                // For now, we rely on auto-resolve trigger in socketController or manual
+            if (phase === 'RESULTS') {
+                // Start Results Timer (short duration to read what happened)
+                this.startTimer(timerConfig.RESULTS || 30, io, () => {
+                    this.setPhase('DAY', io);
+                    io.to('admin').emit('admin_state_update', this.getAdminState());
+                    io.to('public').emit('state_update', this.getPublicState());
+                });
             }
 
             return true;
@@ -258,26 +309,27 @@ const gameService = {
     kickPlayer(id) {
         if (players.has(id)) {
             const name = players.get(id).name;
+            const socketId = players.get(id).socketId;
             this.removePlayer(id);
-            return { success: true, message: `${name} was kicked.` };
+            return { success: true, message: `${name} was kicked.`, kickedSocketId: socketId };
         }
         return { success: false, message: 'Player not found.' };
     },
 
     castVote(voterId, targetId) {
         if (currentPhase !== 'VOTING') return false;
-        const voter = players.get(voterId);
+        const voter = this.getPlayer(voterId);
         if (!voter || !voter.alive) return false;
 
         if (targetId === 'skip') {
-            votes.set(voterId, 'skip');
+            votes.set(voter.id, 'skip');
             return true;
         }
 
-        const target = players.get(targetId);
+        const target = this.getPlayer(targetId);
         if (!target || !target.alive) return false;
 
-        votes.set(voterId, targetId);
+        votes.set(voter.id, target.id);
         return true;
     },
 
@@ -317,7 +369,10 @@ const gameService = {
 
     registerNightAction(playerId, action) {
         // action: { type: 'KILL' | 'PROTECT' | 'CHECK', targetId, payload }
-        const player = players.get(playerId);
+        // Allow actions in DAY or NIGHT
+        if (currentPhase !== 'DAY' && currentPhase !== 'NIGHT') return false;
+
+        const player = this.getPlayer(playerId);
         if (!player || !player.alive) return false;
 
         // Validate role
@@ -325,7 +380,7 @@ const gameService = {
         if (action.type === 'PROTECT' && player.role !== 'Angel') return false;
         if (action.type === 'CHECK' && player.role !== 'Prophet') return false;
 
-        nightActions.set(playerId, action);
+        nightActions.set(player.id, action);
         return true;
     },
 
@@ -433,6 +488,37 @@ const gameService = {
             return player;
         }
         return null;
+    },
+
+    submitAngelRequest(playerId, targetId, message) {
+        const player = this.getPlayer(playerId);
+        if (!player || player.role !== 'Angel' || !player.alive) return false;
+
+        const target = this.getPlayer(targetId);
+        if (!target) return false;
+
+        angelRequests.set(player.id, {
+            targetId: target.id,
+            targetName: target.name,
+            message: message,
+            approved: false
+        });
+        return true;
+    },
+
+    approveAngelRequest(angelId) {
+        if (angelRequests.has(angelId)) {
+            const req = angelRequests.get(angelId);
+            req.approved = true;
+
+            // Convert to actual night action
+            this.registerNightAction(angelId, {
+                type: 'PROTECT',
+                targetId: req.targetId
+            });
+            return true;
+        }
+        return false;
     }
 };
 

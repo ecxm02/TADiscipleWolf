@@ -15,6 +15,7 @@ export default defineConfig({
         ws: true,
         changeOrigin: true
       }
-    }
+    },
+    host: true
   }
 })

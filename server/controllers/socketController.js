@@ -5,9 +5,21 @@ module.exports = (io) => {
         console.log('User connected:', socket.id);
 
         // Join Game
-        socket.on('join_game', (name) => {
-            gameService.addPlayer(socket.id, name);
+        socket.on('join_game', (data) => {
+            const name = typeof data === 'string' ? data : data.name;
+            const sessionId = typeof data === 'string' ? null : data.sessionId;
+
+            if (!sessionId) {
+                console.warn('Join game without sessionId');
+                return;
+            }
+
+            const player = gameService.addPlayer(socket.id, name, sessionId);
             socket.join('public');
+            socket.join(player.id); // Join private room
+
+            // Send back the role immediately in case of reconnect
+            socket.emit('role_update', player.role);
 
             // Broadcast updates
             io.to('public').emit('state_update', gameService.getPublicState());
@@ -37,23 +49,18 @@ module.exports = (io) => {
         socket.on('action_set_phase', (phase) => {
             gameService.setPhase(phase, io); // Pass io for timers
 
-            // If phase is NIGHT (end of voting), resolve votes automatically
-            if (phase === 'NIGHT') {
-                const result = gameService.resolveVotes();
-                io.to('admin').emit('action_result', result);
-                io.to('public').emit('vote_result', result);
+            // If admin manually sets to RESULTS, we should probably trigger resolution too?
+            if (phase === 'RESULTS') {
+                const voteResult = gameService.resolveVotes();
+                const { publicResult, privateMessages } = gameService.resolveNightPhase();
+                const combinedResult = `${voteResult.result} ${publicResult}`;
 
-                // Auto-resolve night actions after a short delay
-                setTimeout(() => {
-                    const { publicResult, privateMessages } = gameService.resolveNightPhase();
-                    io.to('public').emit('vote_result', { result: publicResult });
-                    io.to('admin').emit('action_result', { message: publicResult });
-                    for (const [playerId, message] of Object.entries(privateMessages)) {
-                        io.to(playerId).emit('private_message', message);
-                    }
-                    io.to('admin').emit('admin_state_update', gameService.getAdminState());
-                    io.to('public').emit('state_update', gameService.getPublicState());
-                }, 2000);
+                io.to('public').emit('vote_result', { result: combinedResult });
+                io.to('admin').emit('action_result', { message: combinedResult });
+
+                for (const [playerId, message] of Object.entries(privateMessages)) {
+                    io.to(playerId).emit('private_message', message);
+                }
             }
 
             io.to('admin').emit('admin_state_update', gameService.getAdminState());
@@ -110,6 +117,19 @@ module.exports = (io) => {
             io.to(playerId).emit('role_update', role);
         });
 
+        socket.on('action_angel_request', ({ targetId, message }) => {
+            gameService.submitAngelRequest(socket.id, targetId, message);
+            io.to('admin').emit('admin_state_update', gameService.getAdminState());
+        });
+
+        socket.on('action_angel_approve', (angelId) => {
+            if (gameService.approveAngelRequest(angelId)) {
+                io.to('admin').emit('admin_state_update', gameService.getAdminState());
+                // Notify the Angel
+                io.to(angelId).emit('angel_request_approved');
+            }
+        });
+
         // --- Advanced Features Handlers ---
 
         socket.on('action_set_timer_config', (config) => {
@@ -139,10 +159,12 @@ module.exports = (io) => {
             const result = gameService.kickPlayer(playerId);
             io.to('admin').emit('action_result', result);
 
-            // Force disconnect the socket if possible, or client handles it via state update
-            const targetSocket = io.sockets.sockets.get(playerId);
-            if (targetSocket) {
-                targetSocket.disconnect(true);
+            if (result.success && result.kickedSocketId) {
+                const kickedSocket = io.sockets.sockets.get(result.kickedSocketId);
+                if (kickedSocket) {
+                    io.to(result.kickedSocketId).emit('kicked');
+                    kickedSocket.disconnect(true);
+                }
             }
 
             io.to('admin').emit('admin_state_update', gameService.getAdminState());

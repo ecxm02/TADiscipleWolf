@@ -30,6 +30,7 @@ const currentPhaseComponent = computed(() => {
     case 'DAY': return DayPhase
     case 'VOTING': return VotingPhase
     case 'NIGHT': return NightPhase
+    case 'RESULTS': return NightPhase
     default: return LobbyPhase
   }
 })

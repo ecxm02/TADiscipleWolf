@@ -110,16 +110,21 @@ const approveRequest = (id) => {
                 {{ formatTime(timer.remaining) }}
             </div>
 
-            <div class="badge badge-lg">{{ currentPhase }}</div>
+            <div class="badge badge-lg p-4 font-bold">{{ currentPhase }} {{ dayNumber > 0 ? dayNumber : '' }}</div>
             
             <div class="join">
-                <button v-if="currentPhase === 'LOBBY'" class="btn join-item btn-primary" @click="setPhase('DAY')">Start Day</button>
+                <button v-if="currentPhase === 'LOBBY'" class="btn join-item btn-primary" @click="setPhase('DAY')">Start Day 1</button>
                 
+                <!-- Day Phase Controls -->
                 <button v-if="currentPhase === 'DAY'" class="btn join-item btn-warning" @click="setPhase('VOTING')">End Day (Start Vote)</button>
                 
-                <button v-if="currentPhase === 'VOTING'" class="btn join-item btn-error" @click="setPhase('NIGHT')">End Vote (Show Results)</button>
+                <!-- Voting Phase Controls -->
+                <button v-if="currentPhase === 'VOTING'" class="btn join-item btn-outline" @click="setPhase('DAY')">Back to Day</button>
+                <button v-if="currentPhase === 'VOTING'" class="btn join-item btn-error" @click="setPhase('NIGHT')">End Vote (Start Night)</button>
                 
-                <button v-if="currentPhase === 'NIGHT'" class="btn join-item btn-secondary" @click="resolveNight">Resolve Night Actions</button>
+                <!-- Night Phase Controls -->
+                <button v-if="currentPhase === 'NIGHT'" class="btn join-item btn-outline" @click="setPhase('VOTING')">Back to Voting</button>
+                <button v-if="currentPhase === 'NIGHT'" class="btn join-item btn-secondary" @click="resolveNight">Reveal Night Results</button>
                 <button v-if="currentPhase === 'NIGHT'" class="btn join-item btn-success" @click="setPhase('DAY')">Start Next Day</button>
                 
                 <!-- Reset Option -->
@@ -144,7 +149,7 @@ const approveRequest = (id) => {
                   <div>
                       <h3 class="font-bold mb-2">Role Quotas</h3>
                       <div class="grid grid-cols-2 gap-2 mb-4">
-                          <div v-for="role in roles" :key="role" class="form-control">
+                          <div v-for="role in roles.filter(r => r !== 'Disciple')" :key="role" class="form-control">
                               <label class="label">
                                   <span class="label-text">{{ role }}</span>
                               </label>
@@ -250,6 +255,7 @@ const approveRequest = (id) => {
                     {{ player.taskCompleted ? 'Verified' : 'Pending' }}
                   </span>
                 </label>
+                <div class="text-xs mt-1 italic opacity-70">{{ player.currentTask }}</div>
               </td>
               <td class="flex gap-2">
                 <button 

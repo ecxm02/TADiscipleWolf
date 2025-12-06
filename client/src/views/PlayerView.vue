@@ -8,12 +8,10 @@ import NightPhase from '../components/game/NightPhase.vue'
 
 const gameStore = useGameStore()
 const playerName = ref('')
-const hasJoined = ref(false)
 
 const join = () => {
   if (playerName.value.trim()) {
     gameStore.joinGame(playerName.value)
-    hasJoined.value = true
   }
 }
 
@@ -41,20 +39,14 @@ const formatTime = (seconds) => {
     return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-import { watch } from 'vue';
-watch(() => gameStore.connected, (isConnected) => {
-    if (!isConnected) {
-        hasJoined.value = false;
-        playerName.value = ''; // Optional: clear name or keep it
-    }
-});
+
 </script>
 
 <template>
   <div class="min-h-screen flex items-center justify-center p-4">
     <!-- Login Screen -->
     <transition name="fade" mode="out-in">
-      <div v-if="!hasJoined" class="card w-full max-w-sm bg-base-200 shadow-2xl">
+      <div v-if="!gameStore.joined" class="card w-full max-w-sm bg-base-200 shadow-2xl">
         <div class="card-body">
           <h2 class="card-title justify-center mb-6 text-2xl font-serif">Disciples & Spirits</h2>
           <div class="form-control w-full">

@@ -6,8 +6,20 @@ module.exports = (io) => {
 
         // Join Game
         socket.on('join_game', (data) => {
-            const name = typeof data === 'string' ? data : data.name;
-            const sessionId = typeof data === 'string' ? null : data.sessionId;
+            let { name, sessionId } = typeof data === 'string' ? { name: data, sessionId: null } : data;
+
+            // If only sessionId is provided (reconnect attempt)
+            if (sessionId && !name) {
+                const existingPlayer = gameService.getPlayer(sessionId);
+                if (existingPlayer) {
+                    // Valid reconnect
+                    name = existingPlayer.name;
+                } else {
+                    // Invalid reconnect (server restarted or invalid ID)
+                    socket.emit('force_rejoin');
+                    return;
+                }
+            }
 
             if (!sessionId) {
                 console.warn('Join game without sessionId');
@@ -20,6 +32,10 @@ module.exports = (io) => {
 
             // Send back the role immediately in case of reconnect
             socket.emit('role_update', player.role);
+
+            // Send teammates info if applicable
+            const teammates = gameService.getTeammates(player.id);
+            socket.emit('teammates_update', teammates);
 
             // Broadcast updates
             io.to('public').emit('state_update', gameService.getPublicState());
@@ -89,23 +105,6 @@ module.exports = (io) => {
             for (const [playerId, message] of Object.entries(privateMessages)) {
                 io.to(playerId).emit('private_message', message);
             }
-
-            // Update state
-            io.to('admin').emit('admin_state_update', gameService.getAdminState());
-            io.to('public').emit('state_update', gameService.getPublicState());
-        });
-
-        socket.on('request_task', () => {
-            const player = gameService.getPlayer(socket.id);
-            if (player) {
-                const day = gameService.getPublicState().dayNumber;
-                const task = gameService.getTask(player.role, day);
-                socket.emit('task_update', task);
-            }
-        });
-
-        socket.on('action_revive', (playerId) => {
-            gameService.revivePlayer(playerId);
             io.to('admin').emit('admin_state_update', gameService.getAdminState());
             io.to('public').emit('state_update', gameService.getPublicState());
         });
@@ -123,10 +122,11 @@ module.exports = (io) => {
         });
 
         socket.on('action_angel_approve', (angelId) => {
-            if (gameService.approveAngelRequest(angelId)) {
+            const result = gameService.approveAngelRequest(angelId);
+            if (result.success) {
                 io.to('admin').emit('admin_state_update', gameService.getAdminState());
-                // Notify the Angel
-                io.to(angelId).emit('angel_request_approved');
+                // Notify the Angel with the target name
+                io.to(angelId).emit('angel_request_approved', result.targetName);
             }
         });
 

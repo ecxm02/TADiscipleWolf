@@ -5,6 +5,7 @@ export const useGameStore = defineStore('game', {
     state: () => ({
         socket: null,
         connected: false,
+        joined: false,
         isAdmin: false,
         phase: 'LOBBY', // LOBBY, DAY, VOTING, NIGHT
         players: [], // List of players (filtered if public, full if admin)
@@ -13,7 +14,10 @@ export const useGameStore = defineStore('game', {
         lastActionMessage: '', // For feedback (e.g., "Miraculously Saved")
         voteResult: null, // Store the result of the vote
         currentTask: '', // Store the daily task
+        teammates: [], // List of teammate names (for Evil Spirit/Angel)
         angelRequests: [], // [sessionId, {targetId, message, approved}]
+        angelRequestApproved: false, // Track if my angel request is approved
+        protectedTargetName: '', // Name of the person I am protecting
     }),
 
     actions: {
@@ -34,6 +38,7 @@ export const useGameStore = defineStore('game', {
 
             this.socket.on('disconnect', () => {
                 this.connected = false;
+                this.joined = false;
                 this.myId = null;
                 this.myRole = 'Disciple';
                 this.isAdmin = false;
@@ -41,8 +46,10 @@ export const useGameStore = defineStore('game', {
                 this.players = [];
                 this.voteResult = null;
                 this.currentTask = '';
+                this.teammates = [];
                 this.privateMessage = '';
                 this.angelRequests = [];
+                this.angelRequestApproved = false;
             });
 
             this.socket.on('state_update', (state) => {
@@ -87,13 +94,35 @@ export const useGameStore = defineStore('game', {
                 this.currentTask = task;
             });
 
+            this.socket.on('teammates_update', (teammates) => {
+                this.teammates = teammates;
+            });
+
             this.socket.on('private_message', (msg) => {
                 this.privateMessage = msg;
             });
 
-            this.socket.on('angel_request_approved', () => {
+            this.socket.on('angel_request_approved', (targetName) => {
+                this.angelRequestApproved = true;
+                this.protectedTargetName = targetName;
                 // Feedback for the Angel
-                alert("Your prayer has been heard and approved.");
+                alert(`Your prayer has been heard. You are protecting ${targetName}.`);
+            });
+
+            this.socket.on('force_rejoin', () => {
+                console.log('Force rejoin received');
+                localStorage.removeItem('sessionId');
+                this.myId = null;
+                this.joined = false;
+            });
+
+            this.socket.on('kicked', () => {
+                console.log('Kicked received');
+                localStorage.removeItem('sessionId');
+                this.myId = null;
+                this.joined = false;
+                // Reload to clear state completely or just stay on login
+                window.location.reload();
             });
         },
 
@@ -107,6 +136,7 @@ export const useGameStore = defineStore('game', {
                 }
                 this.myId = sessionId;
                 this.socket.emit('join_game', { name, sessionId });
+                this.joined = true;
             }
         },
 

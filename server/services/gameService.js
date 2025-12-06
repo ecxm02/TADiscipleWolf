@@ -20,7 +20,6 @@ let timerState = {
     intervalId: null
 };
 let roleQuotas = {
-    'Disciple': 0,
     'Angel': 0,
     'Prophet': 0,
     'Evil Spirit': 0
@@ -29,48 +28,7 @@ let roleQuotas = {
 // Helper to get random integer
 const getRandomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
-const TASKS = {
-    'Disciple': [
-        "Day 1: Recite John 3:16, Psalm 23:1–2, or Galatians 5:22–23 to the GM.",
-        "Day 2: Serve the Community. Prepare fruits/snacks in the kitchen.",
-        "Day 3: Care for a Brother/Sister. Talk to someone in distress and pray for them.",
-        "Day 4: Worship Task. Sing a short worship song to the GM.",
-        "Day 5: Fellowship Blessing. Write a personalised encouragement letter.",
-        "Day 6: Scripture Hunt. Exchange favourite verses with 3 players.",
-        "Day 7: Act of Service. Help someone with a small task.",
-        "Day 8: Kindness Challenge. Give 3 meaningful compliments."
-    ],
-    'Evil Spirit': [
-        "Day 1: Deliver a note to the GM without being suspicious.",
-        "Day 2: Memorise a short phrase and recite it to the GM.",
-        "Day 3: Draw a cross on a piece of paper and show the GM.",
-        "Day 4: Do a quick act of service that can be faked.",
-        "Day 5: Help set up chairs or move items.",
-        "Day 6: Pretend to exchange a verse with someone.",
-        "Day 7: Carry an item for someone.",
-        "Day 8: Compliment someone (can be generic)."
-    ],
-    'Prophet': [
-        "Day 1: Memorise Psalm 121 and recite to GM.",
-        "Day 2: Write a detailed encouragement letter to 2 players.",
-        "Day 3: Complete 2 Disciple tasks instead of 1.",
-        "Day 4: Have a short reflection with the GM on a Bible theme.",
-        "Day 5: Pray for 3 players and write down what you prayed.",
-        "Day 6: Draw a parable scene (e.g., The Lost Sheep).",
-        "Day 7: Recite a short devotion to the GM.",
-        "Day 8: Find 3 players and bless each with a verse."
-    ],
-    'Angel': [
-        "Day 1: Write a prayer for protection.",
-        "Day 2: Chat with a player to find out their needs.",
-        "Day 3: Write a prayer for healing.",
-        "Day 4: Write a prayer for wisdom.",
-        "Day 5: Write a prayer for peace.",
-        "Day 6: Write a prayer for faith.",
-        "Day 7: Write a prayer for provision.",
-        "Day 8: Write a prayer for unity."
-    ]
-};
+const TASKS = require('../tasks');
 
 const gameService = {
     addPlayer(socketId, name, sessionId) {
@@ -114,6 +72,20 @@ const gameService = {
         }
     },
 
+    kickPlayer(playerId) {
+        // Hard remove
+        if (players.has(playerId)) {
+            const player = players.get(playerId);
+            // Remove from socket map if online
+            if (player.socketId) {
+                socketMap.delete(player.socketId);
+            }
+            players.delete(playerId);
+            return true;
+        }
+        return false;
+    },
+
     getPlayer(id) {
         // Check if id is a socketId
         if (socketMap.has(id)) {
@@ -128,9 +100,37 @@ const gameService = {
     },
 
     getTask(role, day) {
-        const roleTasks = TASKS[role] || TASKS['Disciple'];
-        const index = (day - 1) % roleTasks.length;
-        return roleTasks[index];
+        // Angels do not get tasks
+        if (role === 'Angel') {
+            return "Your role does not have a daily task.";
+        }
+
+        // Evil Spirits get Disciple tasks to blend in
+        let targetRole = role;
+        if (role === 'Evil Spirit') {
+            targetRole = 'Disciple';
+        }
+
+        const roleTasks = TASKS[targetRole] || TASKS['Disciple'];
+        // Random task selection
+        const randomIndex = Math.floor(Math.random() * roleTasks.length);
+        return roleTasks[randomIndex];
+    },
+
+    getTeammates(playerId) {
+        const player = this.getPlayer(playerId);
+        if (!player) return [];
+
+        const allowedRoles = ['Evil Spirit', 'Angel'];
+        if (!allowedRoles.includes(player.role)) return [];
+
+        const teammates = [];
+        for (const p of players.values()) {
+            if (p.id !== player.id && p.role === player.role) {
+                teammates.push(p.name);
+            }
+        }
+        return teammates;
     },
 
     getPublicState() {
@@ -165,6 +165,7 @@ const gameService = {
 
     setPhase(phase, io) {
         if (['LOBBY', 'DAY', 'VOTING', 'NIGHT', 'RESULTS'].includes(phase)) {
+            const previousPhase = currentPhase;
             currentPhase = phase;
 
             // Stop any existing timer
@@ -172,10 +173,11 @@ const gameService = {
 
             if (phase === 'DAY') {
                 dayNumber++;
-                // Reset daily states
+                // Reset daily states and assign tasks
                 players.forEach(p => {
                     p.taskCompleted = false;
                     p.protected = false;
+                    p.currentTask = this.getTask(p.role, dayNumber);
                 });
                 nightActions.clear();
                 angelRequests.clear();
@@ -191,35 +193,36 @@ const gameService = {
                 votes.clear();
                 // Start Voting Timer
                 this.startTimer(timerConfig.VOTING, io, () => {
-                    // Transition directly to RESULTS
-                    // Resolve votes and night actions (which are now done in DAY)
+                    // Transition to NIGHT automatically if timer ends
+                    this.setPhase('NIGHT', io);
+                    io.to('admin').emit('admin_state_update', this.getAdminState());
+                    io.to('public').emit('state_update', this.getPublicState());
+                });
+            }
+            if (phase === 'NIGHT') {
+                // If coming from VOTING, resolve votes first
+                if (previousPhase === 'VOTING') {
                     const voteResult = this.resolveVotes();
-                    const { publicResult, privateMessages } = this.resolveNightPhase();
 
-                    // Combine results
-                    const combinedResult = `${voteResult.result} ${publicResult}`;
+                    // Resolve Night Actions immediately with the vote result
+                    const { publicResult, privateMessages } = this.resolveNightPhase(voteResult);
 
-                    // Broadcast results
-                    io.to('public').emit('vote_result', { result: combinedResult });
-                    io.to('admin').emit('action_result', { message: combinedResult });
+                    // Broadcast combined results
+                    io.to('public').emit('vote_result', { result: publicResult });
+                    io.to('admin').emit('action_result', { message: publicResult });
 
+                    // Send private messages
                     for (const [playerId, message] of Object.entries(privateMessages)) {
                         io.to(playerId).emit('private_message', message);
                     }
+                }
 
-                    this.setPhase('RESULTS', io);
-                    io.to('admin').emit('admin_state_update', this.getAdminState());
-                    io.to('public').emit('state_update', this.getPublicState());
-                });
+                // Start Night Timer (optional, or manual)
+                // this.startTimer(timerConfig.NIGHT, io, ...);
             }
-            if (phase === 'RESULTS') {
-                // Start Results Timer (short duration to read what happened)
-                this.startTimer(timerConfig.RESULTS || 30, io, () => {
-                    this.setPhase('DAY', io);
-                    io.to('admin').emit('admin_state_update', this.getAdminState());
-                    io.to('public').emit('state_update', this.getPublicState());
-                });
-            }
+
+            // RESULTS phase is now merged into NIGHT/DAY transition logic visually, 
+            // but we keep the code if needed for specific result screens.
 
             return true;
         }
@@ -274,21 +277,28 @@ const gameService = {
         const totalPlayers = playerIds.length;
 
         // Calculate total roles needed
-        let totalQuotas = 0;
-        for (const count of Object.values(roleQuotas)) {
-            totalQuotas += parseInt(count);
+        // Calculate total special roles
+        let specialRolesCount = 0;
+        for (const [role, count] of Object.entries(roleQuotas)) {
+            specialRolesCount += parseInt(count);
         }
 
-        if (totalQuotas !== totalPlayers) {
-            return { success: false, message: `Quotas (${totalQuotas}) do not match player count (${totalPlayers}).` };
+        if (specialRolesCount > totalPlayers) {
+            return { success: false, message: `Special roles (${specialRolesCount}) exceed player count (${totalPlayers}).` };
         }
 
         // Create pool of roles
         let rolePool = [];
+        // Add special roles
         for (const [role, count] of Object.entries(roleQuotas)) {
             for (let i = 0; i < count; i++) {
                 rolePool.push(role);
             }
+        }
+        // Fill rest with Disciples
+        const discipleCount = totalPlayers - specialRolesCount;
+        for (let i = 0; i < discipleCount; i++) {
+            rolePool.push('Disciple');
         }
 
         // Shuffle roles
@@ -384,16 +394,26 @@ const gameService = {
         return true;
     },
 
-    resolveNightPhase() {
-        let resultMessage = "Night has ended. ";
+    resolveNightPhase(voteResult) {
+        let resultMessage = "";
         const deaths = [];
         const checks = [];
+        const privateMessages = {};
+
+        // 0. Include Vote Result
+        if (voteResult) {
+            resultMessage += `\n[VOTE RESULT]\n${voteResult.result}\n`;
+        }
 
         // 1. Apply Protection (Angel)
         for (const [pid, action] of nightActions) {
             if (action.type === 'PROTECT') {
                 const target = players.get(action.targetId);
-                if (target) target.protected = true;
+                if (target) {
+                    target.protected = true;
+                    // Notify protected player
+                    privateMessages[target.id] = "You felt a divine presence watching over you. An Angel protected you.";
+                }
             }
         }
 
@@ -413,6 +433,7 @@ const gameService = {
                     else if (target.role === 'Disciple' && target.taskCompleted) {
                         if (getRandomInt(1, 100) <= 50) {
                             killSuccess = false;
+                            privateMessages[target.id] = "Your faith shielded you from an attack!";
                         }
                     }
 
@@ -427,11 +448,10 @@ const gameService = {
         }
 
         // 3. Resolve Checks (Prophet)
-        const privateMessages = {};
-
         for (const [pid, action] of nightActions) {
             if (action.type === 'CHECK') {
                 const prophet = players.get(pid);
+                // Double check task completion just in case
                 if (prophet.taskCompleted) {
                     const target = players.get(action.targetId);
                     if (target) {
@@ -443,6 +463,7 @@ const gameService = {
             }
         }
 
+        resultMessage += "\n[NIGHT REPORT]\n";
         if (deaths.length > 0) {
             resultMessage += `${deaths.join(', ')} was found dead.`;
         } else {

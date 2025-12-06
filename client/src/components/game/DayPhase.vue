@@ -59,10 +59,19 @@ const submitAngelRequest = (targetId) => {
           <h2 class="card-title justify-center text-3xl mb-2 font-serif text-primary">Your Task</h2>
           
           <!-- Role Badge -->
-          <div class="flex justify-center mb-6">
             <div class="badge badge-secondary badge-lg p-4 text-lg shadow-md">
               {{ myRole }}
             </div>
+
+
+          <!-- Teammates Display -->
+          <div v-if="gameStore.teammates && gameStore.teammates.length > 0" class="mb-4 animate-fade-in">
+              <div class="alert alert-info shadow-sm py-2">
+                  <div class="flex flex-col w-full">
+                      <span class="text-xs uppercase font-bold opacity-70">Your Allies</span>
+                      <span class="font-bold">{{ gameStore.teammates.join(', ') }}</span>
+                  </div>
+              </div>
           </div>
 
           <div class="bg-base-200 p-6 rounded-xl my-4 shadow-inner min-h-[120px] flex items-center justify-center">
@@ -93,7 +102,7 @@ const submitAngelRequest = (targetId) => {
       <div class="card bg-base-100 shadow-2xl border-2 border-secondary/20 h-full relative overflow-hidden">
         
         <!-- Lock Overlay -->
-        <div v-if="myPlayer && !myPlayer.taskCompleted && myRole !== 'Angel'" class="absolute inset-0 bg-base-300/80 z-10 flex flex-col items-center justify-center backdrop-blur-sm">
+        <div v-if="myPlayer && !myPlayer.taskCompleted && myRole !== 'Angel' && myRole !== 'Evil Spirit'" class="absolute inset-0 bg-base-300/80 z-10 flex flex-col items-center justify-center backdrop-blur-sm">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-24 w-24 text-base-content/50 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
           <h3 class="text-2xl font-bold text-base-content/70">Action Locked</h3>
           <p class="text-base-content/60 mt-2">Complete and verify your task to unlock.</p>
@@ -125,14 +134,28 @@ const submitAngelRequest = (targetId) => {
 
             <!-- Angel: Protect -->
             <div v-else-if="myRole === 'Angel'">
-                <p class="mb-4 text-lg">Choose a soul to protect.</p>
-                <textarea v-model="prayerText" class="textarea textarea-bordered w-full mb-4" placeholder="Write your prayer here..."></textarea>
-                <div class="grid grid-cols-1 gap-2 max-h-[200px] overflow-y-auto">
-                    <button v-for="p in otherPlayers" :key="p.id" 
-                        class="btn btn-outline btn-info btn-md w-full" 
-                        @click="submitAngelRequest(p.id)">
-                        Protect {{ p.name }}
-                    </button>
+                <div v-if="gameStore.angelRequestApproved">
+                    <div class="alert alert-success shadow-lg mb-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <span>Prayer Approved! You are protecting {{ gameStore.protectedTargetName }}.</span>
+                    </div>
+                </div>
+                <div v-else-if="actionSubmitted">
+                    <div class="alert alert-info shadow-lg mb-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        <span>Prayer submitted. Waiting for GM approval...</span>
+                    </div>
+                </div>
+                <div v-else>
+                    <p class="mb-4 text-lg">Write a prayer and choose a soul to protect.</p>
+                    <textarea v-model="prayerText" class="textarea textarea-bordered w-full mb-4" placeholder="Write your prayer here..."></textarea>
+                    <div class="grid grid-cols-1 gap-2 max-h-[200px] overflow-y-auto">
+                        <button v-for="p in otherPlayers" :key="p.id" 
+                            class="btn btn-outline btn-info btn-md w-full" 
+                            @click="submitAngelRequest(p.id)">
+                            Submit Prayer for {{ p.name }}
+                        </button>
+                    </div>
                 </div>
             </div>
 

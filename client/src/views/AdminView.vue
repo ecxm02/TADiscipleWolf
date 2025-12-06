@@ -66,7 +66,7 @@ const updateQuotas = () => {
 }
 
 const autoAssignRoles = () => {
-    gameStore.autoAssignRoles()
+    gameStore.autoAssignRoles(localQuotas.value)
 }
 
 const updateTimerConfig = () => {
@@ -74,10 +74,7 @@ const updateTimerConfig = () => {
 }
 
 const roles = ['Disciple', 'Angel', 'Prophet', 'Evil Spirit'];
-
-const canEditRoles = computed(() => {
-    return currentPhase === 'LOBBY' || currentPhase === 'NIGHT';
-})
+const specialRoles = ['Angel', 'Prophet', 'Evil Spirit'];
 
 const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60);
@@ -144,7 +141,7 @@ const approveRequest = (id) => {
                   <div>
                       <h3 class="font-bold mb-2">Role Quotas</h3>
                       <div class="grid grid-cols-2 gap-2 mb-4">
-                          <div v-for="role in roles" :key="role" class="form-control">
+                          <div v-for="role in specialRoles" :key="role" class="form-control">
                               <label class="label">
                                   <span class="label-text">{{ role }}</span>
                               </label>
@@ -224,15 +221,9 @@ const approveRequest = (id) => {
                 <div class="text-xs opacity-50">{{ player.id }}</div>
               </td>
               <td>
-                <select 
-                    class="select select-bordered select-xs w-full max-w-xs" 
-                    :value="player.role"
-                    @change="e => setRole(player.id, e.target.value)"
-                    :disabled="!canEditRoles"
-                >
-                    <option v-for="role in roles" :key="role" :value="role">{{ role }}</option>
-                </select>
+                <span class="font-mono">{{ player.role }}</span>
               </td>
+
               <td>
                 <div class="badge" :class="player.alive ? 'badge-success' : 'badge-error'">
                   {{ player.alive ? 'Alive' : 'Dead' }}
@@ -246,9 +237,14 @@ const approveRequest = (id) => {
                     :checked="player.taskCompleted"
                     @change="toggleTask(player.id)"
                   />
-                  <span class="label-text" :class="{'text-success font-bold': player.taskCompleted}">
-                    {{ player.taskCompleted ? 'Verified' : 'Pending' }}
-                  </span>
+                  <div class="flex flex-col">
+                      <span class="label-text" :class="{'text-success font-bold': player.taskCompleted}">
+                        {{ player.taskCompleted ? 'Verified' : 'Pending' }}
+                      </span>
+                      <span v-if="player.currentTask" class="text-xs opacity-70 max-w-[200px] truncate" :title="player.currentTask">
+                          {{ player.currentTask }}
+                      </span>
+                  </div>
                 </label>
               </td>
               <td class="flex gap-2">

@@ -201,21 +201,6 @@ export const useGameStore = defineStore('game', {
         },
 
         setRoleQuotas(quotas) {
-            if (this.socket && this.isAdmin) {
-                this.socket.emit('action_set_role_quotas', quotas);
-            }
-        },
-
-        autoAssignRoles() {
-            if (this.socket && this.isAdmin) {
-                this.socket.emit('action_auto_assign_roles');
-            }
-        },
-
-        kickPlayer(playerId) {
-            if (this.socket && this.isAdmin) {
-                this.socket.emit('action_kick_player', playerId);
-            }
         }
     }
 })

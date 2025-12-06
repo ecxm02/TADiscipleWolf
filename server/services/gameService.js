@@ -269,38 +269,55 @@ const gameService = {
         roleQuotas = { ...roleQuotas, ...quotas };
     },
 
-    autoAssignRoles() {
+    autoAssignRoles(customQuotas) {
+        console.log('AutoAssignRoles called with:', customQuotas);
+        if (customQuotas) {
+            this.setRoleQuotas(customQuotas);
+        }
+
         const playerIds = Array.from(players.keys());
         const totalPlayers = playerIds.length;
+        console.log('Total players:', totalPlayers);
 
         // Calculate total roles needed
         let totalQuotas = 0;
         for (const count of Object.values(roleQuotas)) {
-            totalQuotas += parseInt(count);
+            totalQuotas += (parseInt(count) || 0);
         }
+        console.log('Total quotas specified:', totalQuotas);
 
-        if (totalQuotas !== totalPlayers) {
-            return { success: false, message: `Quotas (${totalQuotas}) do not match player count (${totalPlayers}).` };
+        if (totalQuotas > totalPlayers) {
+            return { success: false, message: `Quotas (${totalQuotas}) exceed player count (${totalPlayers}).` };
         }
 
         // Create pool of roles
         let rolePool = [];
         for (const [role, count] of Object.entries(roleQuotas)) {
-            for (let i = 0; i < count; i++) {
+            const num = parseInt(count) || 0;
+            for (let i = 0; i < num; i++) {
                 rolePool.push(role);
             }
         }
+        console.log('Initial role pool:', rolePool);
+
+        // Fill remainder with Disciples
+        while (rolePool.length < totalPlayers) {
+            rolePool.push('Disciple');
+        }
+        console.log('Full role pool before shuffle:', rolePool);
 
         // Shuffle roles
         for (let i = rolePool.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [rolePool[i], rolePool[j]] = [rolePool[j], rolePool[i]];
         }
+        console.log('Shuffled role pool:', rolePool);
 
         // Assign
         playerIds.forEach((id, index) => {
             const player = players.get(id);
             player.role = rolePool[index];
+            console.log(`Assigned ${player.role} to ${player.name}`);
         });
 
         return { success: true, message: 'Roles assigned successfully.' };
@@ -387,7 +404,16 @@ const gameService = {
     resolveNightPhase() {
         let resultMessage = "Night has ended. ";
         const deaths = [];
-        const checks = [];
+        const privateMessages = {};
+
+        // Helper to append message
+        const addPrivateMessage = (pid, msg) => {
+            if (privateMessages[pid]) {
+                privateMessages[pid] += `\n${msg}`;
+            } else {
+                privateMessages[pid] = msg;
+            }
+        };
 
         // 1. Apply Protection (Angel)
         for (const [pid, action] of nightActions) {
@@ -408,11 +434,20 @@ const gameService = {
                     // Angel Protection
                     if (target.protected) {
                         killSuccess = false;
+                        addPrivateMessage(target.id, "You were attacked by an Evil Spirit, but an Angel's prayer saved you!");
+
+                        // Notify Angel(s)
+                        for (const [angelId, angelAction] of nightActions) {
+                            if (angelAction.type === 'PROTECT' && angelAction.targetId === target.id) {
+                                addPrivateMessage(angelId, `Your prayer was answered! ${target.name} was saved from an attack.`);
+                            }
+                        }
                     }
                     // Faith Shield (Disciple + Task)
                     else if (target.role === 'Disciple' && target.taskCompleted) {
                         if (getRandomInt(1, 100) <= 50) {
                             killSuccess = false;
+                            addPrivateMessage(target.id, "You were attacked, but your Faith Shield protected you!");
                         }
                     }
 
@@ -427,18 +462,16 @@ const gameService = {
         }
 
         // 3. Resolve Checks (Prophet)
-        const privateMessages = {};
-
         for (const [pid, action] of nightActions) {
             if (action.type === 'CHECK') {
                 const prophet = players.get(pid);
                 if (prophet.taskCompleted) {
                     const target = players.get(action.targetId);
                     if (target) {
-                        privateMessages[pid] = `Prophet Vision: ${target.name} is a ${target.role}.`;
+                        addPrivateMessage(pid, `Prophet Vision: ${target.name} is a ${target.role}.`);
                     }
                 } else {
-                    privateMessages[pid] = `Prophet Vision: You did not complete your task, so your vision is clouded.`;
+                    addPrivateMessage(pid, `Prophet Vision: You did not complete your task, so your vision is clouded.`);
                 }
             }
         }

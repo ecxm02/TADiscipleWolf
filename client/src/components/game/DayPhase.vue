@@ -93,7 +93,7 @@ const submitAngelRequest = (targetId) => {
       <div class="card bg-base-100 shadow-2xl border-2 border-secondary/20 h-full relative overflow-hidden">
         
         <!-- Lock Overlay -->
-        <div v-if="myPlayer && !myPlayer.taskCompleted && myRole !== 'Angel'" class="absolute inset-0 bg-base-300/80 z-10 flex flex-col items-center justify-center backdrop-blur-sm">
+        <div v-if="myPlayer && !myPlayer.taskCompleted && myRole !== 'Angel' && myRole !== 'Evil Spirit'" class="absolute inset-0 bg-base-300/80 z-10 flex flex-col items-center justify-center backdrop-blur-sm">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-24 w-24 text-base-content/50 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
           <h3 class="text-2xl font-bold text-base-content/70">Action Locked</h3>
           <p class="text-base-content/60 mt-2">Complete and verify your task to unlock.</p>

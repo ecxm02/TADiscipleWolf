@@ -100,7 +100,9 @@ module.exports = (io) => {
             if (player) {
                 const day = gameService.getPublicState().dayNumber;
                 const task = gameService.getTask(player.role, day);
+                player.currentTask = task; // Store task in player object
                 socket.emit('task_update', task);
+                io.to('admin').emit('admin_state_update', gameService.getAdminState());
             }
         });
 
@@ -142,8 +144,8 @@ module.exports = (io) => {
             io.to('admin').emit('admin_state_update', gameService.getAdminState());
         });
 
-        socket.on('action_auto_assign_roles', () => {
-            const result = gameService.autoAssignRoles();
+        socket.on('action_auto_assign_roles', (quotas) => {
+            const result = gameService.autoAssignRoles(quotas);
             io.to('admin').emit('action_result', result);
             if (result.success) {
                 io.to('admin').emit('admin_state_update', gameService.getAdminState());
